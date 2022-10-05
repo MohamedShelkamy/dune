@@ -1,0 +1,9 @@
+file(GLOB DUNE_MD5_FILES vendor/libraries/md5/*.c)
+
+set_source_files_properties(${DUNE_MD5_FILES}
+    PROPERTIES COMPILE_FLAGS "${DUNE_C_FLAGS} ${DUNE_C_FLAGS_STRICT}")
+
+list(APPEND DUNE_VENDOR_FILES ${DUNE_MD5_FILES})
+
+set(DUNE_VENDOR_INCS_DIR ${DUNE_VENDOR_INCS_DIR}
+  ${PROJECT_SOURCE_DIR}/vendor/libraries)
