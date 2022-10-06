@@ -141,38 +141,23 @@ namespace Maneuver
             for(auto p: path ) {
 
                 //const auto state= static_cast<const ompl::base::RealVectorStateSpace::StateType *>(paths.getState(i));
-
                 DUNE::IMC::Goto* go_near = new DUNE::IMC::Goto();
-
                 go_near->lat = DUNE::Math::Angles::radians(p.first);
-
                 go_near->lon = DUNE::Math::Angles::radians(p.second);
-
                 go_near->speed_units = DUNE::IMC::SUNITS_METERS_PS;
-
                 go_near->speed = speed;//m_args.speed_rpms;
-
                 maneuvers.push_back(*go_near);
-
                 delete go_near;
             }
 
             DUNE::IMC::PlanSpecification pspec;
-
             sequentialPlan(plan_id, &maneuvers, pspec);
-
             DUNE::IMC::PlanDB pdb;
-
             pdb.op = DUNE::IMC::PlanDB::DBOP_SET;
-
             pdb.type = DUNE::IMC::PlanDB::DBT_REQUEST;
-
             pdb.plan_id = pspec.plan_id;
-
             pdb.arg.set(pspec);
-
             pdb.request_id = 0;
-
             return pdb;
 
         }
@@ -194,14 +179,13 @@ namespace Maneuver
       void
       onMain(void)
       {
-          std::vector<std::pair<double, double>> path = {{41.1861304,-8.70793785},{41.1861082,-8.70654042}};
-          DUNE::IMC::PlanDB x = createPlanDBEntry(path,"p1",1.5);
-          x.setDestination(0x2810);
+          std::vector<std::pair<double, double>> path = {{63.332948, 10.088234},{63.3373007792706, 10.10364420719973}};
+          DUNE::IMC::PlanDB x = createPlanDBEntry(path,"p2",1.5);
+          //x.setDestination(0x2810);
           dispatch(x);
-          activatePlan("p1",0x2810);
+          activatePlan("p2",0x2810);
         while (!stopping())
         {
-
             waitForMessages(1.0);
         }
       }
