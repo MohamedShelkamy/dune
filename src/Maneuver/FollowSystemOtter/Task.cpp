@@ -250,6 +250,9 @@ namespace Maneuver
         double announced_bearing;
         double announced_displace = 0;
 
+
+
+
         if (!m_first_announce)
         {
           WGS84::getNEBearingAndRange(m_last_known_lat, m_last_known_lon, msg->lat, msg->lon, &announced_bearing, &announced_displace);
@@ -355,6 +358,9 @@ namespace Maneuver
         WGS84::displace(offx, offy, &m_path.end_lat, &m_path.end_lon);
         debug("ComputeNEDOffsets offx: %f offy %f, psi: %f", offx, offy, psi);
       }
+
+
+
 
       //! Routine for checking the safety of the vehicle's position
       //! this routine return true if the present location is safe

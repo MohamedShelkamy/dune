@@ -44,7 +44,7 @@ namespace Plan
   //! PlanSpecification that is sent to the plan database and
   //! (optionally) is also executed immediately (through a PlanControl
   //! message).
-  //!
+  //!PlanGeneration
   //! @author José Pinto
   namespace Generator
   {

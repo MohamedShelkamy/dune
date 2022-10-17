@@ -8724,7 +8724,7 @@ namespace DUNE
       fp32_t y;
       //! Offset down.
       fp32_t z;
-      //! Rotation over x axis.
+      //! Rotphiation over x axis.
       fp32_t phi;
       //! Rotation over y axis.
       fp32_t theta;

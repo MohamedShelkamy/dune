@@ -27,12 +27,18 @@
 // Author: Pedro Calado                                                     *
 //***************************************************************************
 
+// modifications are done by Mohamed Ali
+
+// this task represents a formation control algorithm based on FollowsSystem Maneuver putting into consideration the speed for the otters and
+//the relative positions between each other
+
 // DUNE headers.
 #include <DUNE/DUNE.hpp>
-
+#include <iostream>
+#include <algorithm>
 namespace Maneuver
 {
-  namespace FollowSystem
+  namespace FollowOtter
   {
     using DUNE_NAMESPACES;
 
@@ -49,10 +55,10 @@ namespace Maneuver
 
     struct Task: public DUNE::Maneuvers::Maneuver
     {
-      //! Variable to save the maneuver's data  //
+      //! Variable to save the maneuver's data
       IMC::FollowSystem m_maneuver;
       //! Vehicle's Estimated State
-      IMC::EstimatedState m_estate;
+      IMC::EstimatedState m_estate;  // for the slave vehicle
       //! Desired path to be thrown
       IMC::DesiredPath m_path;
       //! Remote State computed heading's timestamp, for evaluating the best heading to be used
@@ -73,6 +79,16 @@ namespace Maneuver
       bool m_first_announce;
       //! this boolean tells us if we have an estimated state already
       bool m_has_estimated_state;
+      //! this dp plan represents the master current plan
+      IMC::PlanDB Master_Plan_Dp;
+      //! this dp plan represents the Slave current plan
+      IMC::PlanDB Slave_Plan_Dp;
+      //! vector for all master sent estimated states
+      std::vector<IMC::EstimatedState> master_estimated_states;
+
+      // this boolean is responsible to increase the speed for the robot
+      bool increase_slave_speed ;
+
       //! Task Arguments
       Arguments m_args;
 
@@ -143,15 +159,22 @@ namespace Maneuver
       void
       consume(const IMC::EstimatedState* msg)
       {
-        if (msg->getSource() != getSystemId())
-          return;
+        if (msg->getSource() != getSystemId()){
+            if(msg->getSource()==m_maneuver.system ){
+                inf("the master estimated Lat pos ", msg->lat);
+                inf("the master estimated Lon pos ", msg->lon);
+                master_estimated_states.push_back(*msg);
+            }
+
+            return;}
 
         // do not do a thing if the announce method is not active
         if (!m_args.announce_active)
           return;
 
-        m_estate = *msg;
-        m_has_estimated_state = true;
+        m_estate = *msg;                // our slave estimated state
+        m_has_estimated_state = true;   // set the boolean estimated state
+
       }
 
       void
@@ -219,7 +242,7 @@ namespace Maneuver
       void
       consume(const IMC::Announce* msg)
       {
-        // Not the vehicle we are following or the announce method is inactive
+        // Not the vehicle we are following or the announcement method is inactive
         if (msg->getSource() != m_maneuver.system || !m_args.announce_active)
           return;
 
@@ -242,9 +265,23 @@ namespace Maneuver
         double announced_bearing;
         double announced_displace = 0;
 
+        //! these two variables are responsible for detecting the relative position between the master and slave to see how to handle the speed
+        //!  of the master and slave in case the master and slave distance is more than the required offset we will adjust either the slave or the master speed
+        double bearing_master_slave;      //the bearing will be in radians
+        double displace_master_slave;     // displacement will be in meter
+
+        double bearing_difference;        // this variable contains the difference between master bearing and the master_slave bearing
+
         if (!m_first_announce)
         {
           WGS84::getNEBearingAndRange(m_last_known_lat, m_last_known_lon, msg->lat, msg->lon, &announced_bearing, &announced_displace);
+
+          if(m_has_estimated_state)  //! this if condition will calculate the difference in the bearing between the master position and the slave
+             WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
+
+
+
+
 
           // if the announcing system has not moved much, use the previously computed bearing
           if (announced_displace < m_args.min_displace)
@@ -258,17 +295,24 @@ namespace Maneuver
           computeNEDOffsets(msg->lat, msg->lon, 0.0, announced_bearing);
 
           m_last_known_bearing = announced_bearing;
+          bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
+          if (bearing_difference> M_PI_2 )
+              increase_slave_speed=true;
+          else
+              increase_slave_speed=false;
         }
         else // it is the first time announce is running
         {
           // compute lat and lon of the desired path
+          m_first_announce=false;
           computeNEDOffsets(msg->lat, msg->lon, 0.0, 0.0);
+
         }
 
         m_path.lradius = m_args.loiter_radius;
         m_path.flags = IMC::DesiredPath::FL_DIRECT;
 
-        m_path.speed = m_maneuver.speed;
+        m_path.speed = m_maneuver.speed;                // this part will create an issue with rotation cause both vehicles will rotate with the same speed
         m_path.speed_units = m_maneuver.speed_units;
         dispatch(m_path);
 
@@ -332,6 +376,16 @@ namespace Maneuver
 
         WGS84::displace(offx, offy, &m_path.end_lat, &m_path.end_lon);
       }
+
+      //! this function is responsible to return the minimum difference between two bearing angles
+      //! we will use this one to know the corresponding position between the slave and the master to decide if we need to increase the speed or decrease it
+
+      double
+      getDifference(double bearing1, double bearing2) {
+
+          return std::min( std::fmod((bearing1-bearing2+M_PI) , M_PI),std::fmod((bearing1-bearing2+M_PI) , M_PI)) ;
+      }
+
 
       //! Routine for checking the safety of the vehicle's position
       //! this routine return true if the present location is safe

@@ -43,12 +43,17 @@ namespace Maneuver
 
     struct Task: public DUNE::Tasks::Task
     {
-      //! Constructor.
-      //! @param[in] name task name.
-      //! @param[in] ctx context.
+
+
+        //! Constructor.
+        //! @param[in] name task name.
+        //! @param[in] ctx context.
       Task(const std::string& name, Tasks::Context& ctx):
         DUNE::Tasks::Task(name, ctx)
       {
+
+          bind<IMC::Temperature>(this);
+
       }
 
       //! Update internal state with new parameter values.
@@ -91,8 +96,10 @@ namespace Maneuver
           //! @param[in] maneuvers A vector with maneuvers (order of the resulting plan will correspond
           //! to the order of this vector).
           //! @param[out] result The resulting PlanSpecification will be stored here.
-          void
-          sequentialPlan(std::string plan_id, const IMC::MessageList<IMC::Maneuver>* maneuvers, IMC::PlanSpecification& result)
+          //!
+          //!
+      void
+      sequentialPlan(std::string plan_id, const IMC::MessageList<IMC::Maneuver>* maneuvers, IMC::PlanSpecification& result)
           {
               IMC::PlanManeuver last_man;
 
@@ -162,7 +169,8 @@ namespace Maneuver
 
         }
         void activatePlan(std::string plan_id, uint16_t id)  {
-            bool ignore_errors = true;
+
+          bool ignore_errors = true;
             IMC::PlanControl pcontrol;
             pcontrol.type = IMC::PlanControl::PC_REQUEST;
             pcontrol.op = IMC::PlanControl::PC_START;
@@ -175,19 +183,32 @@ namespace Maneuver
 
             spew("Plan start request sent");
         }
+
+
+      void
+      consume(const IMC::Temperature* msg){
+          inf("the system id , from %u", getSystemId());
+          inf("the id , from %u", msg->getId());
+      }
+
+
+
+
       //! Main loop.
       void
       onMain(void)
       {
-          std::vector<std::pair<double, double>> path = {{63.332948, 10.088234},{63.3373007792706, 10.10364420719973}};
+          std::vector<std::pair<double, double>> path = {{63.332948, 10.088234},{63.3373007792706, 10.09364420719973}};
           DUNE::IMC::PlanDB x = createPlanDBEntry(path,"p2",1.5);
           //x.setDestination(0x2810);
           dispatch(x);
           activatePlan("p2",0x2810);
-        while (!stopping())
-        {
-            waitForMessages(1.0);
-        }
+
+
+          while (!stopping())
+          {
+              waitForMessages(10.0);
+          }
       }
     };
   }
