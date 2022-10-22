@@ -85,9 +85,16 @@ namespace Maneuver
       IMC::PlanDB Slave_Plan_Dp;
       //! vector for all master sent estimated states
       std::vector<IMC::EstimatedState> master_estimated_states;
+      //! this variable contains the last known speed for the slave
+      double last_known_speed;
+      //! Pi controller parameters
+      double integeral;
+      double previous_error;
+      double kp;
+      double ki;
 
-      // this boolean is responsible to increase the speed for the robot
-      bool increase_slave_speed ;
+      //! the second slave estimated state
+      IMC::EstimatedState m2_estate;
 
       //! Task Arguments
       Arguments m_args;
@@ -168,7 +175,7 @@ namespace Maneuver
 
             return;}
 
-        // do not do a thing if the announce method is not active
+        // do not do a thing if the announcement method is not active
         if (!m_args.announce_active)
           return;
 
@@ -258,30 +265,19 @@ namespace Maneuver
           enableMovement(false);
           return;
         }
-
         enableMovement(true);
-
         // compute the bearing with the announced data using previous data
         double announced_bearing;
         double announced_displace = 0;
-
         //! these two variables are responsible for detecting the relative position between the master and slave to see how to handle the speed
         //!  of the master and slave in case the master and slave distance is more than the required offset we will adjust either the slave or the master speed
         double bearing_master_slave;      //the bearing will be in radians
         double displace_master_slave;     // displacement will be in meter
-
         double bearing_difference;        // this variable contains the difference between master bearing and the master_slave bearing
 
         if (!m_first_announce)
         {
           WGS84::getNEBearingAndRange(m_last_known_lat, m_last_known_lon, msg->lat, msg->lon, &announced_bearing, &announced_displace);
-
-          if(m_has_estimated_state)  //! this if condition will calculate the difference in the bearing between the master position and the slave
-             WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
-
-
-
-
 
           // if the announcing system has not moved much, use the previously computed bearing
           if (announced_displace < m_args.min_displace)
@@ -295,31 +291,29 @@ namespace Maneuver
           computeNEDOffsets(msg->lat, msg->lon, 0.0, announced_bearing);
 
           m_last_known_bearing = announced_bearing;
-          bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
-          if (bearing_difference> M_PI_2 )
-              increase_slave_speed=true;
-          else
-              increase_slave_speed=false;
+
+            if(m_has_estimated_state){  //! this if condition will calculate the difference in the bearing between the master position and the slave
+                WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
+                bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
+                last_known_speed = PI_Speed_Controller(last_known_speed,bearing_difference);       }
+
         }
         else // it is the first time announce is running
         {
           // compute lat and lon of the desired path
           m_first_announce=false;
           computeNEDOffsets(msg->lat, msg->lon, 0.0, 0.0);
-
+          last_known_speed= m_maneuver.speed;
         }
 
         m_path.lradius = m_args.loiter_radius;
         m_path.flags = IMC::DesiredPath::FL_DIRECT;
-
-        m_path.speed = m_maneuver.speed;                // this part will create an issue with rotation cause both vehicles will rotate with the same speed
+        m_path.speed = last_known_speed;              // this part will create an issue with rotation cause both vehicles will rotate with the same speed
         m_path.speed_units = m_maneuver.speed_units;
         dispatch(m_path);
-
         // update "last" variables
         m_last_known_lat = msg->lat;
         m_last_known_lon = msg->lon;
-
         trace("system being pursued has heading: %0.2f and was displaced %0.2f", m_last_known_bearing, announced_displace);
         trace("this is %0.4f seconds past the maneuver's initial time", Clock::get() - m_start_time);
         trace("announce data: lat %0.5f, lon %0.5f, %0.2f, %0.4f", msg->lat, msg->lon, msg->height, msg->getTimeStamp());
@@ -415,6 +409,24 @@ namespace Maneuver
         {
           return true;
         }
+      }
+
+      double
+      PI_Speed_Controller(double CurrentSpeed, double BearingDifference){
+          double speed;
+          double error;
+          error=BearingDifference-M_PI_2;
+          integeral = integeral+ error*ki+ previous_error*ki;
+          previous_error=error;
+          speed= integeral+error*kp;
+          if(speed>3){
+              speed=3.0;
+          }
+          else if(speed<0){
+              speed=0.0;
+          }
+
+          return speed;
       }
 
       //! Function for enabling and disabling the control loops
