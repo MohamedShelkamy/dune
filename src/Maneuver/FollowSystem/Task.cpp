@@ -146,7 +146,7 @@ namespace Maneuver
         if (msg->getSource() != getSystemId())
           return;
 
-        // do not do a thing if the announce method is not active
+        // do not do a thing if the announcement method is not active
         if (!m_args.announce_active)
           return;
 

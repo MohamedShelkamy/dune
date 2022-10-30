@@ -150,7 +150,7 @@ namespace Maneuver
       {
         //inf("Message from %x, followed system: %x", msg->getSource(), m_maneuver.system);
         if (msg->getSource() == getSystemId()) {
-          // do not do a thing if the announce method is not active
+          // do not do a thing if the announcement method is not active
           if (!m_args.announce_active)
             return;
 
@@ -227,7 +227,9 @@ namespace Maneuver
       void
       consume(const IMC::Announce* msg)
       {
-        // Not the vehicle we are following or the announce method is inactive
+
+          inf("we received a data from the master itself , from %u", getSystemId());
+          // Not the vehicle we are following or the announcement method is inactive
         if (msg->getSource() != m_maneuver.system || !m_args.announce_active)
           return;
 

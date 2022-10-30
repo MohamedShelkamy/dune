@@ -51,6 +51,7 @@ namespace Maneuver
       double min_displace;
       double heading_cooldown;
       double safe_distance;
+      bool   anti_collision;
     };
 
     struct Task: public DUNE::Maneuvers::Maneuver
@@ -71,10 +72,23 @@ namespace Maneuver
       Counter<double> m_last_update;
       //! variable to hold the last known bearing
       double m_last_known_bearing;
-      //! variable that will hold the last known latittude
+      //! variable that will hold the last known latitude
       double m_last_known_lat;
       //! variable that will hold the last known longitude
       double m_last_known_lon;
+
+      //! variable that will hold the last known latitude for the second slave
+      double s_last_known_lat;
+      //! variable that will hold the last known longitude for the second slave
+      double s_last_known_lon;
+
+      //! vehicle latitude and longitude
+      double v_last_known_lat;
+      //! variable that will hold the last known longitude for the second slave
+      double v_last_known_lon;
+
+
+
       //! is it the first time consume announce is being ran?
       bool m_first_announce;
       //! this boolean tells us if we have an estimated state already
@@ -92,7 +106,6 @@ namespace Maneuver
       double previous_error;
       double kp;
       double ki;
-
       //! the second slave estimated state
       IMC::EstimatedState m2_estate;
 
@@ -140,6 +153,11 @@ namespace Maneuver
         .units(Units::Meter)
         .description("Minimum safe distance to target system");
 
+
+          param("anti collision", m_args.anti_collision)
+                  .defaultValue("true")
+                  .description("avoid collision between the slave vehicles");
+
         bindToManeuver<Task, IMC::FollowSystem>();
         bind<IMC::RemoteState>(this);
         bind<IMC::EstimatedState>(this, true); // consume even if inactive
@@ -168,9 +186,11 @@ namespace Maneuver
       {
         if (msg->getSource() != getSystemId()){
             if(msg->getSource()==m_maneuver.system ){
-                inf("the master estimated Lat pos ", msg->lat);
-                inf("the master estimated Lon pos ", msg->lon);
                 master_estimated_states.push_back(*msg);
+            }
+            else{
+
+                m2_estate = *msg;
             }
 
             return;}
@@ -192,7 +212,7 @@ namespace Maneuver
         m_maneuver = *maneuver;
         m_heading_timestamp.reset();
         m_start_time = Clock::get();
-        // Initialize the variable last update to the beggining of the maneuver
+        // Initialize the variable last update to the beginning of the maneuver
         m_last_update.reset();
 
         debug("loitering radius is %0.2f meters", m_args.loiter_radius);
@@ -249,22 +269,61 @@ namespace Maneuver
       void
       consume(const IMC::Announce* msg)
       {
-        // Not the vehicle we are following or the announcement method is inactive
-        if (msg->getSource() != m_maneuver.system || !m_args.announce_active)
-          return;
+          typedef std::numeric_limits< double > dbl;
+          std::cout.precision(dbl::max_digits10);
+
+          // Not the vehicle we are following or the announcement method is inactive
+        if (msg->getSource() != m_maneuver.system || !m_args.announce_active) {
+            if (msg->getSource() != getSystemId() and
+                m_args.anti_collision) {  //! that means we received a message from the other slave
+
+
+                if (msg->getSource() == 10256 or msg->getSource() == 10259) {
+                    //std::cout << "ana get bitches" << msg->lat << std::endl;
+                    //std::cout << "ana get bitches" << msg->lon << std::endl;
+                    s_last_known_lat = msg->lat;
+                    s_last_known_lon = msg->lon;
+
+
+                }
+
+
+            }
+            else {
+                v_last_known_lat = msg->lat;
+                v_last_known_lon = msg->lon;
+            }
+            return;
+        }
 
         // update the variable last update
         m_last_update.reset();
 
         // if present location is unsafe, then
-        if (!checkSafety(msg->lat, msg->lon))
+        if (!checkSafety(msg->lat, msg->lon) )
         {
+            inf("stop4 stop4 stop4 stop4 stop4 stop4 stop4 stop4 stop4");
+
           // leave this consume function but first update "last" variables
           m_last_known_lat = msg->lat;
           m_last_known_lon = msg->lon;
           enableMovement(false);
           return;
         }
+
+        if( (!checkSafety2() )and m_args.anti_collision){
+            inf("stop2 stop2 stop2 stop2 stop2 stop2 stop2 stop2 stop2");
+            if(!collision_avoidance(msg->lat,msg->lon)){
+                inf("stop3 stop3 stop3 stop3 stop3 stop3 stop3 stop3 stop3");
+                m_last_known_lat = msg->lat;
+                m_last_known_lon = msg->lon;
+                enableMovement(false);
+                return;
+            }
+
+        }
+
+
         enableMovement(true);
         // compute the bearing with the announced data using previous data
         double announced_bearing;
@@ -292,10 +351,10 @@ namespace Maneuver
 
           m_last_known_bearing = announced_bearing;
 
-            if(m_has_estimated_state){  //! this if condition will calculate the difference in the bearing between the master position and the slave
-                WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
-                bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
-                last_known_speed = PI_Speed_Controller(last_known_speed,bearing_difference);       }
+            //if(m_has_estimated_state){  //! this if condition will calculate the difference in the bearing between the master position and the slave
+            //    WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
+            //    bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
+            //    last_known_speed = PI_Speed_Controller(last_known_speed,bearing_difference); }
 
         }
         else // it is the first time announce is running
@@ -304,11 +363,13 @@ namespace Maneuver
           m_first_announce=false;
           computeNEDOffsets(msg->lat, msg->lon, 0.0, 0.0);
           last_known_speed= m_maneuver.speed;
+          //std::cout<<"look look look look look look look look look"<<std::endl;
+          //std::cout<<last_known_speed<<std::endl;
         }
 
         m_path.lradius = m_args.loiter_radius;
         m_path.flags = IMC::DesiredPath::FL_DIRECT;
-        m_path.speed = last_known_speed;              // this part will create an issue with rotation cause both vehicles will rotate with the same speed
+        m_path.speed = 1;                             // this part will create an issue with rotation cause both vehicles will rotate with the same speed
         m_path.speed_units = m_maneuver.speed_units;
         dispatch(m_path);
         // update "last" variables
@@ -380,7 +441,6 @@ namespace Maneuver
           return std::min( std::fmod((bearing1-bearing2+M_PI) , M_PI),std::fmod((bearing1-bearing2+M_PI) , M_PI)) ;
       }
 
-
       //! Routine for checking the safety of the vehicle's position
       //! this routine return true if the present location is safe
       //! and returns false otherwise
@@ -389,11 +449,16 @@ namespace Maneuver
       {
         if (m_has_estimated_state)
         {
-          double x, y, r;
+          double x, y, r, r2;
 
           WGS84::displacement(m_estate.lat, m_estate.lon, 0.0, lat, lon, 0.0, &x, &y);
 
-          r = Math::norm((x - m_estate.x), (y - m_estate.y));
+
+           r2 = Math::norm((x - m_estate.x), (y - m_estate.y));
+
+           std::cout<<"take care take care take care take care take care take care take care take care take care"<< r2 << std::endl;
+
+            r = Math::norm((x - m_estate.x), (y - m_estate.y));
 
           // if the distance between them is below the safe distance
           if (r < m_args.safe_distance)
@@ -410,6 +475,69 @@ namespace Maneuver
           return true;
         }
       }
+
+        bool
+        checkSafety2()
+        {
+            if (m_has_estimated_state)
+            {
+                double x, y, r;
+
+                WGS84::displacement(v_last_known_lat, v_last_known_lon, 0.0, s_last_known_lat, s_last_known_lon, 0.0, &x, &y);
+
+
+                //r = Math::norm((x - m_estate.x), (y - m_estate.y));
+
+                r = Math::norm(x, y);
+                std::cout<< r;
+                // if the distance between them is below the safe distance
+                if (r < m_args.safe_distance)
+                {
+                    return false;
+                }
+                else
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                return true;
+            }
+        }
+
+
+
+      bool
+
+      collision_avoidance(double lat, double lon) {
+          if (m_has_estimated_state) {
+              double x1, y1, r1, x2, y2, r2;
+
+
+              WGS84::getNEBearingAndRange(v_last_known_lat, v_last_known_lon, lat, lon, &x1, &y1);
+
+
+              WGS84::getNEBearingAndRange(s_last_known_lat, s_last_known_lon, lat, lon, &x2, &y2);
+
+
+
+              if (y2 > y1) {
+
+                  return true;
+
+
+              } else {
+                  return false;
+              }
+
+
+
+          }
+          return false;
+      }
+
+
 
       double
       PI_Speed_Controller(double CurrentSpeed, double BearingDifference){

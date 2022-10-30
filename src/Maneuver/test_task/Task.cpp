@@ -28,6 +28,7 @@
 //***************************************************************************
 
 // DUNE headers.
+#include <limits>
 #include <DUNE/DUNE.hpp>
 #include <vector>
 #include <utility>
@@ -44,16 +45,21 @@ namespace Maneuver
     struct Task: public DUNE::Tasks::Task
     {
 
+        IMC::EstimatedState master_estate;
+        //! Desired path to be thrown
+        IMC::DesiredPath m_path;
+        //! desired GOto point
+        IMC::Goto        d_point;
 
-        //! Constructor.
-        //! @param[in] name task name.
-        //! @param[in] ctx context.
-      Task(const std::string& name, Tasks::Context& ctx):
-        DUNE::Tasks::Task(name, ctx)
+        Task(const std::string& name, Tasks::Context& ctx):
+
+                DUNE::Tasks::Task(name, ctx)
+
       {
-
+          //bindToManeuver<Task, IMC::Goto>();
           bind<IMC::Temperature>(this);
-
+          bind<IMC::Announce>(this);
+          bind<IMC::EstimatedState>(this);
       }
 
       //! Update internal state with new parameter values.
@@ -185,13 +191,56 @@ namespace Maneuver
         }
 
 
-      void
+        void
+        consume(const IMC::Goto* maneuver){
+
+            //dispatch(m_path);
+
+        }
+
+
+        void
       consume(const IMC::Temperature* msg){
-          inf("the system id , from %u", getSystemId());
-          inf("the id , from %u", msg->getId());
+          //inf("the system id , from %u", getSystemId());
+          //inf("the id , from %u", msg->getId());
       }
 
 
+
+        void
+        consume(const IMC::Announce* msg){
+            //inf("we received a data from the master itself , from %u", getSystemId());
+
+            // inf("we received a data from the master itself , from %u", getSystemId());
+            if(msg->getId());
+        }
+
+
+        void
+        consume(const IMC::EstimatedState* msg){
+
+
+
+            if(msg->getSource()!= getSystemId()){
+                inf("we received a data from the second slave , from %u", getSystemId());
+                 return;
+             }
+             else {
+                 //enableMovement(false);
+             }
+        }
+
+
+      void
+      enableMovement(bool enable)
+        {
+            const uint32_t mask = IMC::CL_PATH;
+            DUNE::IMC::ControlLoops  m  ;
+            m.mask=0;
+            dispatch(m);
+            inf("we disabled the motion");
+
+        }
 
 
       //! Main loop.
@@ -201,13 +250,11 @@ namespace Maneuver
           std::vector<std::pair<double, double>> path = {{63.332948, 10.088234},{63.3373007792706, 10.09364420719973}};
           DUNE::IMC::PlanDB x = createPlanDBEntry(path,"p2",1.5);
           //x.setDestination(0x2810);
-          dispatch(x);
-          activatePlan("p2",0x2810);
-
-
+          //dispatch(x);
+          //activatePlan("p2",0x2810);
           while (!stopping())
           {
-              waitForMessages(10.0);
+              waitForMessages(1.0);
           }
       }
     };
