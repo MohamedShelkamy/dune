@@ -52,10 +52,19 @@ namespace Maneuver
       double heading_cooldown;
       double safe_distance;
       bool   anti_collision;
+      float kp;
+      float ki;
+      float kd;
+      float desired_distance;
+
     };
 
     struct Task: public DUNE::Maneuvers::Maneuver
     {
+       //! RPM PID controller  // this one to control the speed of the slave to keep the distance with the master fixed
+       DiscretePID m_rpm_pid;
+       //! Control Parcels for meters per second controller
+      IMC::ControlParcel m_parcel_mps;
       //! Variable to save the maneuver's data
       IMC::FollowSystem m_maneuver;
       //! Vehicle's Estimated State
@@ -76,18 +85,17 @@ namespace Maneuver
       double m_last_known_lat;
       //! variable that will hold the last known longitude
       double m_last_known_lon;
-
-      //! variable that will hold the last known latitude for the second slave
+     //! variable that will hold the last known latitude for the second slave
       double s_last_known_lat;
       //! variable that will hold the last known longitude for the second slave
       double s_last_known_lon;
+     //! Time of last estimated state message.
+      Delta m_delta;
 
       //! vehicle latitude and longitude
       double v_last_known_lat;
       //! variable that will hold the last known longitude for the second slave
       double v_last_known_lon;
-
-
 
       //! is it the first time consume announce is being ran?
       bool m_first_announce;
@@ -99,16 +107,9 @@ namespace Maneuver
       IMC::PlanDB Slave_Plan_Dp;
       //! vector for all master sent estimated states
       std::vector<IMC::EstimatedState> master_estimated_states;
-      //! this variable contains the last known speed for the slave
-      double last_known_speed;
-      //! Pi controller parameters
-      double integeral;
-      double previous_error;
-      double kp;
-      double ki;
       //! the second slave estimated state
       IMC::EstimatedState m2_estate;
-
+      double r2;
       //! Task Arguments
       Arguments m_args;
 
@@ -158,10 +159,40 @@ namespace Maneuver
                   .defaultValue("true")
                   .description("avoid collision between the slave vehicles");
 
+
+          param("kp", m_args.kp)
+                  .defaultValue("0.08")      //0.05
+                  .description("proportional gain");
+
+
+          param("kd", m_args.kd)
+                  .defaultValue("0.0525")
+                  .description("Derivative gain");
+
+          param("ki", m_args.ki)
+                  .defaultValue("0.068")  //0.098
+                  .description("Integral gain");
+
+
+          param("desired_distance", m_args.desired_distance)
+                  .defaultValue("20")
+                  .description("desired distance");
+
+
+
         bindToManeuver<Task, IMC::FollowSystem>();
         bind<IMC::RemoteState>(this);
         bind<IMC::EstimatedState>(this, true); // consume even if inactive
         bind<IMC::Announce>(this);
+      }
+
+       void setup(void){
+           m_rpm_pid.setProportionalGain(m_args.kp);
+           m_rpm_pid.setDerivativeGain(m_args.kd);
+           m_rpm_pid.setIntegralGain(m_args.ki);
+           m_rpm_pid.setOutputLimits(0.4, 4.0);
+           m_rpm_pid.setIntegralLimits(1.5);
+           m_rpm_pid.enableParcels(this, &m_parcel_mps);
       }
 
       void
@@ -187,6 +218,7 @@ namespace Maneuver
         if (msg->getSource() != getSystemId()){
             if(msg->getSource()==m_maneuver.system ){
                 master_estimated_states.push_back(*msg);
+
             }
             else{
 
@@ -208,7 +240,7 @@ namespace Maneuver
       consume(const IMC::FollowSystem* maneuver)
       {
         enableMovement(false);
-
+        setup();
         m_maneuver = *maneuver;
         m_heading_timestamp.reset();
         m_start_time = Clock::get();
@@ -265,11 +297,10 @@ namespace Maneuver
         trace("remote data: lat %0.5f, lon %0.5f, depth %d, timestamp %0.4f", rs->lat, rs->lon, rs->depth, rs->getTimeStamp());
         trace("thrown waypoint: lat %0.5f %0.5f %0.2f", m_path.end_lat, m_path.end_lon, m_path.end_z);
       }
-
       void
       consume(const IMC::Announce* msg)
       {
-          typedef std::numeric_limits< double > dbl;
+         typedef std::numeric_limits< double > dbl;
           std::cout.precision(dbl::max_digits10);
 
           // Not the vehicle we are following or the announcement method is inactive
@@ -279,15 +310,10 @@ namespace Maneuver
 
 
                 if (msg->getSource() == 10256 or msg->getSource() == 10259) {
-                    //std::cout << "ana get bitches" << msg->lat << std::endl;
-                    //std::cout << "ana get bitches" << msg->lon << std::endl;
                     s_last_known_lat = msg->lat;
-                    s_last_known_lon = msg->lon;
 
-
-                }
-
-
+       s_last_known_lon = msg->lon;
+               }
             }
             else {
                 v_last_known_lat = msg->lat;
@@ -323,16 +349,13 @@ namespace Maneuver
 
         }
 
-
         enableMovement(true);
         // compute the bearing with the announced data using previous data
         double announced_bearing;
         double announced_displace = 0;
         //! these two variables are responsible for detecting the relative position between the master and slave to see how to handle the speed
         //!  of the master and slave in case the master and slave distance is more than the required offset we will adjust either the slave or the master speed
-        double bearing_master_slave;      //the bearing will be in radians
-        double displace_master_slave;     // displacement will be in meter
-        double bearing_difference;        // this variable contains the difference between master bearing and the master_slave bearing
+
 
         if (!m_first_announce)
         {
@@ -351,10 +374,20 @@ namespace Maneuver
 
           m_last_known_bearing = announced_bearing;
 
-            //if(m_has_estimated_state){  //! this if condition will calculate the difference in the bearing between the master position and the slave
-            //    WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
-            //    bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
-            //    last_known_speed = PI_Speed_Controller(last_known_speed,bearing_difference); }
+          // Compute time delta.
+          double tstep = m_delta.getDelta();
+          checkSafety(m_path.end_lat,m_path.end_lon);
+          float error= (r2-m_args.desired_distance)/10;
+          float speed_diff = m_rpm_pid.step(tstep, error);
+
+          m_path.speed=speed_diff;   // this part will create an issue with rotation cause both vehicles will rotate with the same speed
+          std::cout<<"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"<<error<<std::endl;
+          std::cout<<"hiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"<<speed_diff<<std::endl;
+
+          //if(m_has_estimated_state){  //! this if condition will calculate the difference in the bearing between the master position and the slave
+          //    WGS84::getNEBearingAndRange(msg->lat, msg->lon, m_estate.lat, m_estate.lon, &bearing_master_slave, &displace_master_slave);
+          //    bearing_difference   = getDifference(m_last_known_bearing,bearing_master_slave);
+          //    last_known_speed = PI_Speed_Controller(last_known_speed,bearing_difference); }
 
         }
         else // it is the first time announce is running
@@ -362,14 +395,11 @@ namespace Maneuver
           // compute lat and lon of the desired path
           m_first_announce=false;
           computeNEDOffsets(msg->lat, msg->lon, 0.0, 0.0);
-          last_known_speed= m_maneuver.speed;
-          //std::cout<<"look look look look look look look look look"<<std::endl;
-          //std::cout<<last_known_speed<<std::endl;
+          m_path.speed = m_maneuver.speed;
         }
 
         m_path.lradius = m_args.loiter_radius;
         m_path.flags = IMC::DesiredPath::FL_DIRECT;
-        m_path.speed = 1;                             // this part will create an issue with rotation cause both vehicles will rotate with the same speed
         m_path.speed_units = m_maneuver.speed_units;
         dispatch(m_path);
         // update "last" variables
@@ -430,6 +460,7 @@ namespace Maneuver
         + std::sin(Angles::normalizeRadian(psi - DUNE::Math::c_half_pi)) * m_maneuver.y;
 
         WGS84::displace(offx, offy, &m_path.end_lat, &m_path.end_lon);
+
       }
 
       //! this function is responsible to return the minimum difference between two bearing angles
@@ -449,7 +480,7 @@ namespace Maneuver
       {
         if (m_has_estimated_state)
         {
-          double x, y, r, r2;
+          double x, y, r;
 
           WGS84::displacement(m_estate.lat, m_estate.lon, 0.0, lat, lon, 0.0, &x, &y);
 
@@ -458,7 +489,7 @@ namespace Maneuver
 
            std::cout<<"take care take care take care take care take care take care take care take care take care"<< r2 << std::endl;
 
-            r = Math::norm((x - m_estate.x), (y - m_estate.y));
+           r = Math::norm((x - m_estate.x), (y - m_estate.y));
 
           // if the distance between them is below the safe distance
           if (r < m_args.safe_distance)
@@ -485,9 +516,6 @@ namespace Maneuver
 
                 WGS84::displacement(v_last_known_lat, v_last_known_lon, 0.0, s_last_known_lat, s_last_known_lon, 0.0, &x, &y);
 
-
-                //r = Math::norm((x - m_estate.x), (y - m_estate.y));
-
                 r = Math::norm(x, y);
                 std::cout<< r;
                 // if the distance between them is below the safe distance
@@ -506,13 +534,10 @@ namespace Maneuver
             }
         }
 
-
-
       bool
-
       collision_avoidance(double lat, double lon) {
           if (m_has_estimated_state) {
-              double x1, y1, r1, x2, y2, r2;
+              double x1, y1, x2, y2;
 
 
               WGS84::getNEBearingAndRange(v_last_known_lat, v_last_known_lon, lat, lon, &x1, &y1);
@@ -520,41 +545,14 @@ namespace Maneuver
 
               WGS84::getNEBearingAndRange(s_last_known_lat, s_last_known_lon, lat, lon, &x2, &y2);
 
-
-
               if (y2 > y1) {
-
                   return true;
-
 
               } else {
                   return false;
               }
-
-
-
           }
           return false;
-      }
-
-
-
-      double
-      PI_Speed_Controller(double CurrentSpeed, double BearingDifference){
-          double speed;
-          double error;
-          error=BearingDifference-M_PI_2;
-          integeral = integeral+ error*ki+ previous_error*ki;
-          previous_error=error;
-          speed= integeral+error*kp;
-          if(speed>3){
-              speed=3.0;
-          }
-          else if(speed<0){
-              speed=0.0;
-          }
-
-          return speed;
       }
 
       //! Function for enabling and disabling the control loops
@@ -568,6 +566,8 @@ namespace Maneuver
         else
           setControl(0);
       }
+
+
     };
   }
 }
